@@ -9,7 +9,7 @@ use crate::{
             keybinds::Binding,
             window::{Window, DisplayInformation},
         },
-        replay::{self, Frame, FrameRng},
+        replay::{self, Frame, FrameRng, Saved},
     },
     types::Colour
 };

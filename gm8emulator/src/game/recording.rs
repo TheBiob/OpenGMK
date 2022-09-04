@@ -20,7 +20,7 @@ use crate::{
                 DisplayInformation,
             },
         },
-        replay::{self, Replay},
+        replay::{self, Replay, Saved},
         Game, SceneChange,
     },
     gml::rand::Random,
