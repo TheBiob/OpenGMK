@@ -1,12 +1,11 @@
-use crate::{ 
+use crate::{
     imgui,
     game::{
         Game,
-        recording::{KeyState, ProjectConfig, instance_report::InstanceReport, keybinds::{Keybindings, Binding}},
-        replay::Replay,
+        recording::{WindowKind, KeyState, ProjectConfig, instance_report::InstanceReport, keybinds::{Keybindings, Binding}, popup_dialog::Dialog},
+        replay::{Replay, FrameRng},
         savestate::{self, SaveState},
     },
-    gml::rand::Random,
     render::RendererState,
 };
 use std::path::PathBuf;
@@ -17,7 +16,7 @@ pub struct DisplayInformation<'a, 'f> {
     pub game_running: &'a mut bool,
     pub setting_mouse_pos: &'a mut bool,
     pub new_mouse_pos: &'a mut Option<(i32, i32)>,
-    pub new_rand: &'a mut Option<Random>,
+    pub new_rand: &'a mut Option<FrameRng>,
     pub config: &'a mut ProjectConfig,
     pub err_string: &'a mut Option<String>,
     pub replay: &'a mut Replay,
@@ -28,6 +27,9 @@ pub struct DisplayInformation<'a, 'f> {
     pub renderer_state: &'a mut RendererState,
     pub save_buffer: &'a mut savestate::Buffer,
     pub instance_reports: &'a mut Vec<(i32, Option<InstanceReport>)>,
+
+    pub clean_state: &'a mut bool,
+    pub run_until_frame: &'a mut Option<usize>,
     
     pub save_paths: &'a Vec<PathBuf>,
     pub fps_text: &'a String,
@@ -41,11 +43,11 @@ pub struct DisplayInformation<'a, 'f> {
 
     pub keybindings: &'a mut Keybindings,
 
-
     // These probably shouldn't be pub. I just don't know how to initialize the struct otherwise.
     pub _clear_context_menu: bool,
     pub _request_context_menu: bool,
     pub _context_menu_requested: bool,
+    pub _modal_dialog: Option<&'static str>,
 }
 
 pub trait WindowType {
@@ -59,12 +61,18 @@ pub trait Window: WindowType {
     fn name(&self) -> String;
 
     fn window_id(&self) -> usize { 0 }
+    
+    /// Returns the WindowType that is stored in the config. If it returns None it will not be stored in the config and won't automatically open on startup.
+    fn stored_kind(&self) -> Option<WindowKind> { None }
 
     /// Displays the context menu. Returns false if the context menu is not open anymore.
     fn show_context_menu(&mut self, _info: &mut DisplayInformation) -> bool { false }
 
     /// Runs when an open context menu on this window is closed.
     fn context_menu_close(&mut self) { }
+
+    /// Handles potential modal windows that can be opened from this window. Returns true if any of the modal windows are currently open, false otherwise
+    fn handle_modal(&mut self, _info: &mut DisplayInformation) -> bool { false }
 }
 impl<T> WindowType for T
     where T: Window + 'static
@@ -108,7 +116,7 @@ impl DisplayInformation<'_, '_> {
             // make sure the saved replay is only up to the savestate.
             savestate_replay.truncate_frames(self.config.current_frame);
 
-            let state = SaveState::from(self.game, savestate_replay, self.renderer_state.clone());
+            let state = SaveState::from(self.game, savestate_replay, self.renderer_state.clone(), *self.clean_state);
             let result = self.savestate_save_to_file(slot, &state);
             if slot == self.config.quicksave_slot {
                 *self.savestate = state;
@@ -118,6 +126,7 @@ impl DisplayInformation<'_, '_> {
     }
 
     pub fn savestate_load(&mut self, slot: usize) -> bool {
+        *self.run_until_frame = None;
         if slot == self.config.quicksave_slot {
             self.savestate_load_from_state(self.savestate.clone());
             true
@@ -195,9 +204,9 @@ impl DisplayInformation<'_, '_> {
     }
 
     fn savestate_load_from_state(&mut self, state: SaveState) {
+        *self.clean_state = state.clean_state;
         let (new_replay, new_renderer_state) = state.load_into(self.game);
         *self.renderer_state = new_renderer_state;
-
 
         for (i, state) in self.keyboard_state.iter_mut().enumerate() {
             *state =
@@ -256,5 +265,10 @@ impl DisplayInformation<'_, '_> {
     pub fn reset_context_menu_state(&mut self, clear_context_menu: bool) {
         self._clear_context_menu = clear_context_menu;
         self._request_context_menu = false;
+    }
+
+    pub fn request_modal(&mut self, modal: &mut dyn Dialog)  {
+        modal.reset();
+        self._modal_dialog = Some(modal.get_name());
     }
 }

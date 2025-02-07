@@ -4,7 +4,7 @@ use crate::{
     types::Colour,
     game::recording::window::{Window, Openable, DisplayInformation},
 };
-use ramen::event::Key;
+use ramen::input::Key;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Display, Formatter, Error},
@@ -28,6 +28,7 @@ pub enum Binding {
     NextRand,
     ExportGmtas,
     ToggleMacros,
+    SetMouse,
 }
 impl Display for Binding {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
@@ -43,6 +44,7 @@ impl Display for Binding {
             Self::NextRand => write!(f, "Cycle RNG"),
             Self::ExportGmtas => write!(f, "Export .gmtas"),
             Self::ToggleMacros => write!(f, "Toggle \"Run Macro\""),
+            Self::SetMouse => write!(f, "Set Mouse"),
             //_ => write!(f, "{:?}", self),
         }
     }
@@ -61,6 +63,7 @@ impl Binding {
             Self::NextRand => Some(KeyCombination::from(vec![Button::Control, Button::R])),
             Self::ExportGmtas => Some(KeyCombination::from(vec![Button::Control, Button::Shift, Button::E])),
             Self::ToggleMacros => Some(KeyCombination::from(vec![Button::Control, Button::Alpha1])),
+            Self::SetMouse => Some(KeyCombination::from(vec![Button::Control, Button::M])),
             //_ => None,
         }
     }
@@ -131,6 +134,7 @@ impl Keybindings {
         insert!(Binding::NextRand);
         insert!(Binding::ExportGmtas);
         insert!(Binding::ToggleMacros);
+        insert!(Binding::SetMouse);
     }
 
     pub fn keybind_pressed(&self, bind: Binding, frame: &imgui::Frame) -> bool {
@@ -148,7 +152,7 @@ impl Keybindings {
         self.bindings.insert(bind, keys);
     }
 
-    /// Update the bindings diabled state to ensure that bindings will be disabled until the next io update.
+    /// Update the bindings disabled state to ensure that bindings will be disabled until the next io update.
     pub fn update_disable_bindings(&mut self) {
         if !self.disable_bindings {
             self.bindings_disabled = false;
@@ -205,6 +209,10 @@ impl Openable<Self> for KeybindWindow {
     }
 }
 impl Window for KeybindWindow {
+    fn stored_kind(&self) -> Option<super::WindowKind> {
+        Some(super::WindowKind::Keybindings)
+    }
+
     fn name(&self) -> String {
         "Keybindings".to_owned()
     }

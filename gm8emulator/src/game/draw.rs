@@ -313,6 +313,10 @@ impl Game {
             game.particles.draw_system(id, &mut game.renderer, &game.assets, true);
         }
 
+        // Extent for drawing tiles in case view is rotated
+        let tile_end_x = f64::from(src_x + src_w + src_h / 2);
+        let tile_end_y = f64::from(src_y + src_h + src_w / 2);
+    
         // draw backgrounds
         self.renderer.set_depth(12000.0);
         for background in self.room.backgrounds.iter().filter(|x| x.visible && !x.is_foreground) {
@@ -326,8 +330,8 @@ impl Game {
                         background.yscale.into(),
                         background.blend,
                         background.alpha.into(),
-                        if background.tile_horizontal { Some((src_x + src_w).into()) } else { None },
-                        if background.tile_vertical { Some((src_y + src_h).into()) } else { None },
+                        background.tile_horizontal.then_some(tile_end_x),
+                        background.tile_vertical.then_some(tile_end_y),
                     );
                 }
             }
@@ -399,8 +403,8 @@ impl Game {
                         background.yscale.into(),
                         background.blend,
                         background.alpha.into(),
-                        if background.tile_horizontal { Some((src_x + src_w).into()) } else { None },
-                        if background.tile_vertical { Some((src_y + src_h).into()) } else { None },
+                        background.tile_horizontal.then_some(tile_end_x),
+                        background.tile_vertical.then_some(tile_end_y),
                     );
                 }
             }

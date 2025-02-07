@@ -15,9 +15,13 @@ use crate::{
 };
 use std::time::Duration;
 
+use super::popup_dialog::{string_input::RNGSelect, Dialog, DialogState};
+
 pub struct ControlWindow {
     seed_text: String,
     rerecord_text: String,
+    rng_select: RNGSelect,
+    seed_base: (i32, i32, i32)
 }
 
 impl Window for ControlWindow {
@@ -31,15 +35,29 @@ impl Window for ControlWindow {
 
         self.update_texts(info);
 
-        if (info.frame.button("Advance", imgui::Vec2(165.0, 20.0), None)
-            || info.keybind_pressed(Binding::Advance))
+        let run_until_frame = if let Some(frame) = *info.run_until_frame {
+            if frame > info.config.current_frame {
+                true
+            } else {
+                *info.run_until_frame = None;
+                false
+            }
+        } else {
+            false
+        };
+
+        let content_width = info.frame.get_content_size().0;
+
+        if (info.frame.button("Advance", imgui::Vec2(content_width, 20.0), None)
+            || info.keybind_pressed(Binding::Advance)
+            || run_until_frame)
             && *info.game_running
             && info.err_string.is_none()
         {
             self.advance_frame(info);
         }
 
-        if (info.frame.button("Quick Save", imgui::Vec2(165.0, 20.0), None)
+        if (info.frame.button("Quick Save", imgui::Vec2(content_width, 20.0), None)
             || info.keybind_pressed(Binding::Quicksave))
             && *info.game_running
             && info.err_string.is_none()
@@ -47,7 +65,7 @@ impl Window for ControlWindow {
             info.savestate_save(info.config.quicksave_slot);
         }
 
-        if info.frame.button("Load Quicksave", imgui::Vec2(165.0, 20.0), None)
+        if info.frame.button("Load Quicksave", imgui::Vec2(content_width, 20.0), None)
             || info.keybind_pressed(Binding::Quickload)
         {
             if *info.startup_successful {
@@ -55,7 +73,7 @@ impl Window for ControlWindow {
             }
         }
 
-        if info.frame.button("Export to .gmtas", imgui::Vec2(165.0, 20.0), None)
+        if info.frame.button("Export to .gmtas", imgui::Vec2(content_width, 20.0), None)
             || info.keybind_pressed(Binding::ExportGmtas)
         {
             let mut filepath = info.project_path.clone();
@@ -93,7 +111,7 @@ impl Window for ControlWindow {
         } else {
             "Full Keyboard###KeyboardLayout"
         };
-        if info.frame.button(keyboard_label, imgui::Vec2(165.0, 20.0), None) 
+        if info.frame.button(keyboard_label, imgui::Vec2(content_width, 20.0), None) 
             || info.keybind_pressed(Binding::ToggleKeyboard)
         {
             info.config.full_keyboard = !info.config.full_keyboard;
@@ -104,7 +122,7 @@ impl Window for ControlWindow {
             InputMode::Direct => "Switch to mouse input###InputMethod",
             InputMode::Mouse => "Switch to direct input###InputMethod",
         };
-        if info.frame.button(input_label, imgui::Vec2(165.0, 20.0), None)
+        if info.frame.button(input_label, imgui::Vec2(content_width, 20.0), None)
             || info.keybind_pressed(Binding::ToggleDirect)
         {
             info.config.input_mode = match info.config.input_mode {
@@ -117,22 +135,30 @@ impl Window for ControlWindow {
             true => "Switch to Read/Write###IsReadOnly",
             false => "Switch to Read-Only###IsReadOnly",
         };
-        if info.frame.button(read_only_label, imgui::Vec2(165.0, 20.0), None) 
+        if info.frame.button(read_only_label, imgui::Vec2(content_width, 20.0), None) 
             || info.keybind_pressed(Binding::ToggleReadOnly)
         {
             info.config.is_read_only = !info.config.is_read_only;
             info.config.save();
         }
 
-        if info.frame.button(">", imgui::Vec2(18.0, 18.0), Some(imgui::Vec2(160.0, 138.0)))
+        let mouse_set_label = match info.config.set_mouse_using_textbox {
+            true => "Set Mouse: textbox###mouse_set_label",
+            false => "Set mouse: clicking###mouse_set_label",
+        };
+        if info.frame.button(mouse_set_label, imgui::Vec2(content_width, 20.0), None) 
+        {
+            info.config.set_mouse_using_textbox = !info.config.set_mouse_using_textbox;
+            info.config.save();
+        }
+
+        if info.frame.button(">", imgui::Vec2(18.0, 18.0), Some(imgui::Vec2(content_width-18.0, 138.0)))
             || info.keybind_pressed(Binding::NextRand)
         {
             if let Some(rand) = &mut info.new_rand {
-                rand.cycle();
+                rand.increase();
             } else {
-                let mut rand = info.game.rand.clone();
-                rand.cycle();
-                *info.new_rand = Some(rand);
+                *info.new_rand = Some(FrameRng::Increment(1));
             }
         }
 
@@ -148,42 +174,49 @@ impl Window for ControlWindow {
     fn show_context_menu(&mut self, info: &mut DisplayInformation) -> bool {
         let mut context_menu_open = true;
 
-        let count;
+        let current_increment = if let Some(FrameRng::Increment(amount)) = info.new_rand { *amount } else { 0 };
+
+        let new_rand;
         if info.new_rand.is_some() && info.frame.menu_item("Reset") {
-            count = None;
+            new_rand = Some(None);
             context_menu_open = false;
-            *info.new_rand = None;
         } else if info.frame.menu_item("+1 RNG call") {
-            count = Some(1);
+            new_rand = Some(Some(FrameRng::Increment(current_increment+1)));
             context_menu_open = false;
         } else if info.frame.menu_item("+5 RNG calls") {
-            count = Some(5);
+            new_rand = Some(Some(FrameRng::Increment(current_increment+5)));
             context_menu_open = false;
         } else if info.frame.menu_item("+10 RNG calls") {
-            count = Some(10);
+            new_rand = Some(Some(FrameRng::Increment(current_increment+10)));
             context_menu_open = false;
         } else if info.frame.menu_item("+50 RNG calls") {
-            count = Some(50);
+            new_rand = Some(Some(FrameRng::Increment(current_increment+50)));
+            context_menu_open = false;
+        } else if info.frame.menu_item("Pick RNG") {
+            info.request_modal(&mut self.rng_select);
+            new_rand = None;
             context_menu_open = false;
         } else {
-            count = None;
+            new_rand = None;
         }
-        if let Some(count) = count {
-            if let Some(rand) = &mut info.new_rand {
-                for _ in 0..count {
-                    rand.cycle();
-                }
-            } else {
-                let mut rand = info.game.rand.clone();
-                for _ in 0..count {
-                    rand.cycle();
-                }
-                *info.new_rand = Some(rand);
-            }
+
+        if let Some(new_rand) = new_rand {
+            *info.new_rand = new_rand;
         }
 
         context_menu_open
-     }
+    }
+
+    fn handle_modal(&mut self, info: &mut DisplayInformation) -> bool {
+        match self.rng_select.show(info) {
+            DialogState::Submit => {
+                *info.new_rand = self.rng_select.get_result();
+                false
+            },
+            DialogState::Open => true,
+            _ => false,
+        }
+    }
 }
 
 impl ControlWindow {
@@ -191,13 +224,32 @@ impl ControlWindow {
         ControlWindow {
             rerecord_text: format!("Re-Records: {}", 0),
             seed_text: format!("Seed: {}", 0),
+            rng_select: RNGSelect::new("Pick RNG"),
+            seed_base: (0, 0, 0), // Stores (base_seed, cycles, result_seed) to not have to re-calculate that every frame
         }
     }
 
     fn update_texts(&mut self, info: &mut DisplayInformation) {
         self.rerecord_text = format!("Re-Records: {}", info.config.rerecords);
         if let Some(rand) = info.new_rand {
-            self.seed_text = format!("Seed: {}", rand.seed())
+            self.seed_text = match *rand {
+                FrameRng::Increment(amount) => {
+                    if self.seed_base.0 != info.game.rand.seed() || self.seed_base.1 != amount {
+                        let mut rng = info.game.rand.clone();
+                        for _ in 0..amount {
+                            rng.cycle();
+                        }
+                        self.seed_base = (info.game.rand.seed(), amount, rng.seed());
+                    }
+                    format!("Seed: +{} ({})", self.seed_base.1, self.seed_base.2)
+                },
+                FrameRng::Override(new_seed) => {
+                    if new_seed == info.game.rand.seed() {
+                        *info.new_rand = None; // Unset new seed if the game's seed is already set to it
+                    }
+                    format!("Seed: {}", new_seed)
+                }
+            }
         } else {
             self.seed_text = format!("Seed: {}", info.game.rand.seed());
         }
@@ -234,7 +286,7 @@ impl ControlWindow {
                 info.replay.truncate_frames(info.config.current_frame);
             }
 
-            let mut new_frame = info.replay.new_frame();
+            let new_frame = info.replay.new_frame();
 
             self.update_keyboard_state(info.keyboard_state, new_frame);
             self.update_mouse_state(info.mouse_state, new_frame);
@@ -245,7 +297,7 @@ impl ControlWindow {
             }
 
             if let Some(rand) = &*info.new_rand {
-                new_frame.new_seed = Some(FrameRng::Override(rand.seed()));
+                new_frame.new_seed = Some(rand.clone());
             }
 
             frame = new_frame;
@@ -294,7 +346,7 @@ impl ControlWindow {
             info.config.ui_width.into(),
             info.config.ui_height.into()
         );
-        info.game.renderer.clear_view(crate::game::recording::CLEAR_COLOUR, 1.0);
+        info.game.renderer.clear_view(if *info.clean_state { crate::game::recording::CLEAR_COLOUR_GOOD } else { crate::game::recording::CLEAR_COLOUR_BAD }, 1.0);
         *info.renderer_state = info.game.renderer.state();
         info.game.renderer.set_state(info.ui_renderer_state);
         info.clear_context_menu();

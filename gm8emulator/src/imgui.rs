@@ -9,9 +9,7 @@ use crate::{
 };
 use cimgui_sys as c;
 use std::{
-    ops,
-    ptr::{self, NonNull},
-    slice,
+    ops, os::raw::c_void, ptr::{self, NonNull}, slice
 };
 
 pub struct Context {
@@ -27,6 +25,11 @@ pub struct IO(c::ImGuiIO);
 pub struct FontData<'a> {
     pub data: &'a [u8],
     pub size: (u32, u32),
+}
+
+struct UserData<'a> {
+    string: &'a mut String,
+    char_limit: Option<usize>,
 }
 
 impl Context {
@@ -74,7 +77,6 @@ impl ops::Drop for Context {
         }
     }
 }
-
 impl Frame<'_> {
     fn cstr_store(&mut self, s: &str) {
         self.0.cbuf.clear();
@@ -275,6 +277,17 @@ impl Frame<'_> {
             pos.assume_init().into()
         }
     }
+    pub fn content_position_max(&self) -> Vec2<f32> {
+        unsafe {
+            let mut pos = std::mem::MaybeUninit::uninit();
+            c::igGetWindowContentRegionMax(pos.as_mut_ptr());
+            pos.assume_init().into()
+        }
+    }
+
+    pub fn get_content_size(&self) -> Vec2<f32> {
+        self.content_position_max()-self.content_position()
+    }
 
     pub fn is_item_focused(&self) -> bool {
         unsafe { c::igIsItemFocused() }
@@ -312,9 +325,74 @@ impl Frame<'_> {
         }
     }
 
-    pub fn input_text(&mut self, label: &str, buffer: *mut u8, length: usize, flags: c::ImGuiInputTextFlags) -> bool {
+    extern "C" fn input_string_callback(callbackdata: *mut c::ImGuiInputTextCallbackData) -> i32 {
+        let data = unsafe { &mut *callbackdata };
+        let userdata = unsafe { &mut *(data.UserData as *mut UserData) };
+        if data.EventFlag == c::ImGuiInputTextFlags__ImGuiInputTextFlags_CallbackResize as _ {
+            // The text changed, check if we need to resize the buffer
+            assert!(userdata.string.as_mut_ptr() == data.Buf as _);
+
+            if userdata.string.capacity() <= data.BufTextLen as _ {
+                // If capacity == text length we are missing 1 byte for the null terminator, resize our buffer
+                userdata.string.reserve(data.BufTextLen as usize - userdata.string.len() + 1);
+                data.Buf = userdata.string.as_mut_ptr() as _;
+            }
+        } else if data.EventFlag == c::ImGuiInputTextFlags__ImGuiInputTextFlags_CallbackEdit as _ {
+            // The text changed (but we aren't applying it yet), check if we have a character limit and limit the new string to that.
+            // We can't do that in resize because while it does have the new text length in bytes, it does not have any way to check the amount of actual characters in the new string, which might differ if the user entered non-ascii characters
+            if let Some(char_limit) = userdata.char_limit {
+                if char_limit < data.BufTextLen as _ { // data.BufTextLen might not be accurate to the amount of characters but it gives a good estimate for whether or not we need to count
+                    let str = unsafe { std::str::from_utf8(std::slice::from_raw_parts(data.Buf as _, data.BufTextLen as _)).unwrap() }; // imgui should always return a valid utf8 string
+                    if let Some((_index, (byte_pos, _char))) = str.char_indices().enumerate().find(|(index, (_, _))| *index >= char_limit) {
+                        unsafe { *data.Buf.add(byte_pos) = 0; }
+                        data.BufTextLen = byte_pos as _;
+                        data.BufDirty = true;
+                    }
+                }
+            }
+        }
+
+        0 // I don't know what this is for but the imgui code seems to indicate that it's not even read so just return 0
+    }
+
+    pub fn input_text(&mut self, label: &str, string: &mut String, flags: c::ImGuiInputTextFlags, char_limit: Option<usize>) -> bool {
         self.cstr_store(label);
-        unsafe { c::igInputText(self.cstr(), buffer as *mut i8, length, flags, None, std::ptr::null_mut()) }
+        unsafe {
+            let buffer = string.as_mut_ptr();
+            let len = string.len();
+            let capacity = string.capacity();
+
+            if *buffer.add(len) != 0 {
+                *buffer.add(len) = 0; // String must be null terminated, if the current string does not end in a null byte, add it. This should be fine since len() will always point to char boundary and be <= capacity, thus be valid for adding a new \0 character into the buffer without breaking utf-8 or going past it's managed bounds
+            }
+
+            let mut userdata = UserData {
+                string,
+                char_limit,
+            };
+            let callback_flags: i32 = if char_limit.is_some() {
+                c::ImGuiInputTextFlags__ImGuiInputTextFlags_CallbackResize |
+                c::ImGuiInputTextFlags__ImGuiInputTextFlags_CallbackEdit
+            } else {
+                c::ImGuiInputTextFlags__ImGuiInputTextFlags_CallbackResize
+            } as _;
+            let result = c::igInputText(
+                self.cstr(),
+                buffer as *mut i8,
+                capacity,
+                flags | callback_flags,
+                 Some(Self::input_string_callback),
+                 &mut userdata as *mut _ as *mut c_void
+            );
+
+            // Buffer and capacity might have been changed at this point, don't assume they're still the same
+            let slice = slice::from_raw_parts(string.as_mut_ptr(), string.capacity());
+            if let Some(new_len) = slice.iter().position(|x| *x == 0) {
+                string.as_mut_vec().set_len(new_len);
+            }
+
+            result
+        }
     }
 
     pub fn checkbox(&mut self, label: &str, value: &mut bool) -> bool {
@@ -341,6 +419,29 @@ impl Frame<'_> {
             let size = Vec2(size.x / 2.0, size.y / 2.0);
             c::igSetCursorPos((center - size).into());
             c::igText(self.cstr())
+        }
+    }
+
+    pub fn text_centered_float(&mut self, text: &str, center: Vec2<f32>) {
+        self.cstr_store(text);
+        unsafe {
+            let mut size = std::mem::MaybeUninit::uninit();
+            c::igCalcTextSize(size.as_mut_ptr(), self.cstr(), std::ptr::null(), false, -1.0);
+            let size = size.assume_init();
+            let size = Vec2((size.x+16.0) / 2.0, (size.y+16.0) / 2.0);
+            let pos: c::ImVec2 = (center - size).into();
+            c::igBegin("__float\0".as_ptr() as _, std::ptr::null_mut(), 0b110_0000_0011_1111_1111);
+            c::igSetWindowPosStr(
+                "__float\0".as_ptr() as _,
+                pos,
+                0,
+            );
+            if c::igIsWindowAppearing() {
+                c::igSetWindowFocusNil();
+            }
+            //c::igSetCursorPos();
+            c::igText(self.cstr());
+            c::igEnd();
         }
     }
 
@@ -518,7 +619,6 @@ impl Frame<'_> {
 
     pub fn begin_screen_cover(&mut self) {
         unsafe {
-            c::igSetNextWindowFocus();
             c::igSetNextWindowSize((*c::igGetIO()).DisplaySize, 0);
             c::igSetNextWindowPos(Vec2(0.0, 0.0).into(), 0, Vec2(0.0, 0.0).into());
             c::igBegin("__cover\0".as_ptr() as _, std::ptr::null_mut(), 0b0001_0011_1111);
@@ -533,19 +633,46 @@ impl Frame<'_> {
                 false
             } else {
                 c::igEnd();
-                let screen_size = (*c::igGetIO()).DisplaySize;
                 c::igSetNextWindowFocus();
-                c::igSetNextWindowPos(
-                    Vec2(f32::from(screen_size.x) / 2.0, f32::from(screen_size.y) / 2.0).into(),
-                    0,
-                    Vec2(0.5, 0.5).into(),
-                );
+                self.center_next_window();
                 c::igBegin("Information\0".as_ptr() as _, std::ptr::null_mut(), 0b0001_0111_1110);
                 self.text(message);
                 c::igEnd();
                 true
             }
         }
+    }
+
+    pub fn open_popup(&mut self, name: &str) {
+        self.cstr_store(name);
+        unsafe {
+            c::igOpenPopup(self.cstr(), 0)
+        }
+    }
+
+    pub fn begin_popup_modal(&mut self, name: &str) -> bool {
+        self.cstr_store(name);
+        let mut open: bool = true;
+        unsafe { c::igBeginPopupModal(self.cstr(), &mut open as _, (c::ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize|c::ImGuiWindowFlags__ImGuiWindowFlags_NoMove) as _) }
+    }
+
+    pub fn center_next_window(&self) {
+        unsafe {
+            let screen_size = (*c::igGetIO()).DisplaySize;
+            c::igSetNextWindowPos(
+                Vec2(f32::from(screen_size.x) / 2.0, f32::from(screen_size.y) / 2.0).into(),
+                0,
+                Vec2(0.5, 0.5).into(),
+            );
+        }
+    }
+
+    pub fn close_current_popup(&self) {
+        unsafe { c::igCloseCurrentPopup() }
+    }
+
+    pub fn end_popup(&self) {
+        unsafe { c::igEndPopup() }
     }
 
     pub fn render(self) {
@@ -632,8 +759,14 @@ impl IO {
         unsafe { (*self.0.Fonts).TexID = ptr };
     }
 
-    pub fn add_input_character(&mut self, code: u32) {
-        unsafe { c::ImGuiIO_AddInputCharacter(&mut self.0, code); }
+    pub fn add_input_character(&mut self, chr: char) {
+        let mut b = [0u16; 2];
+        let section = chr.encode_utf16(&mut b);
+        unsafe {
+            for chars in section {
+                c::ImGuiIO_AddInputCharacterUTF16(&mut self.0, *chars);
+            }
+        }
     }
 
     pub fn setup_default_keymap(&mut self) {

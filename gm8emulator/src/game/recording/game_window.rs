@@ -4,6 +4,7 @@ use crate::{
         Renderer,
         recording::{
             instance_report::InstanceReport,
+            set_mouse_dialog::{SetMouseDialog, MouseDialogResult},
             window::{Window, DisplayInformation},
         },
     },
@@ -21,6 +22,8 @@ struct GameViewData {
 pub struct GameWindow {
     callback_data: GameViewData,
     context_menu_options: Option<Vec<(String, i32)>>,
+    mouse_dialog: SetMouseDialog,
+    set_screencover_focus: bool,
 }
 
 // Game window
@@ -55,17 +58,51 @@ impl GameWindow {
                 renderer: std::ptr::null_mut(),
             },
             context_menu_options: None,
+            mouse_dialog: SetMouseDialog::new(),
+            set_screencover_focus: true,
         }
     }
 
     fn display_window(&mut self, info: &mut DisplayInformation) {
         if *info.setting_mouse_pos {
-            info.frame.begin_screen_cover();
-            info.frame.end();
-            unsafe {
-                cimgui_sys::igSetNextWindowCollapsed(false, 0);
-                cimgui_sys::igSetNextWindowFocus();
+            if self.set_screencover_focus {
+                info.frame.set_next_window_focus();
             }
+            
+            info.frame.begin_screen_cover();
+            let screencover_focused = info.frame.window_focused();
+            info.frame.end();
+
+            if self.set_screencover_focus {
+                unsafe {
+                    cimgui_sys::igSetNextWindowCollapsed(false, 0);
+                    cimgui_sys::igSetNextWindowFocus();
+                }
+            }
+
+            if info.config.set_mouse_using_textbox {
+                self.mouse_dialog.init_if_closed(info.new_mouse_pos.unwrap_or((0,0)));
+                self.mouse_dialog.show_window(info);
+
+                match self.mouse_dialog.get_result() {
+                    Some(MouseDialogResult::Ok(new_mouse_pos)) => {
+                        *info.new_mouse_pos = new_mouse_pos;
+                        *info.setting_mouse_pos = false;
+                    },
+                    Some(MouseDialogResult::Cancel) => {
+                        *info.setting_mouse_pos = false;
+                    },
+                    None => if screencover_focused && !self.set_screencover_focus {
+                        // if we clicked outside the window, cancel setting the mouse
+                        *info.setting_mouse_pos = false;
+                    },
+                }
+            }
+
+            self.set_screencover_focus = false;
+        } else {
+            // Next time we open a screencover we need to initially focus that one again
+            self.set_screencover_focus = true;
         }
         
         let (w, h) = info.game.renderer.stored_size();
@@ -100,11 +137,14 @@ impl GameWindow {
         if !info.frame.window_collapsed() {
             info.frame.callback(callback, &mut self.callback_data);
             
-            if *info.setting_mouse_pos && info.frame.left_clicked() {
-                *info.setting_mouse_pos = false;
+            if *info.setting_mouse_pos && !info.config.set_mouse_using_textbox {
                 let imgui::Vec2(mouse_x, mouse_y) = info.frame.mouse_pos();
-                *info.new_mouse_pos =
-                    Some((-(x + info.win_border_size - mouse_x) as i32, -(y + info.win_frame_height - mouse_y) as i32));
+                let position = (-(x + info.win_border_size - mouse_x) as i32, -(y + info.win_frame_height - mouse_y) as i32);
+                info.frame.text_centered_float(&format!("{}, {}", position.0, position.1), imgui::Vec2(mouse_x, mouse_y-15.0));
+                if info.frame.left_clicked() || info.frame.right_clicked() || info.frame.middle_clicked() {
+                    *info.setting_mouse_pos = false;
+                    *info.new_mouse_pos = Some(position);
+                }
             }
             
             if info.frame.window_hovered() && info.frame.right_clicked() {

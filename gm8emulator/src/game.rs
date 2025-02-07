@@ -55,7 +55,6 @@ use includedfile::IncludedFile;
 use indexmap::IndexMap;
 use ramen::{
     event::Event,
-    monitor::Size,
     window::{Controls, Window},
 };
 use serde::{Deserialize, Serialize};
@@ -546,9 +545,22 @@ impl Game {
         let (width, height) = options.size;
         let window_border = !settings.dont_draw_border;
         let window_icons = !settings.dont_show_buttons;
-        let window = Window::builder()
+
+        let connection = ramen::connection::Connection::new()?;
+        let mut visual: u32 = 0;
+        #[cfg(unix)]
+        unsafe {
+            let display = connection.xdisplay();
+            let screen = connection.xscreenid();
+            crate::render::opengl::glx::glx_init(display, screen);
+            let glx = crate::render::opengl::glx::GLX.as_ref().unwrap();
+            visual = glx.visual;
+        }
+        
+        let mut builder = connection.builder()
+            .class_name("OpenGMK")
             .visible(false)
-            .inner_size(Size::Physical(width.into(), height.into()))
+            .size((width as _, height as _))
             .borderless(!window_border && play_type != PlayType::Record)
             .title(room1_caption.to_owned())
             .resizable(match play_type {
@@ -557,21 +569,28 @@ impl Game {
                 PlayType::Replay => false,
             })
             .controls(if play_type == PlayType::Record {
-                Some(Controls::enabled())
+                Some(Controls::new())
             } else if window_icons {
-                Some(Controls::new(settings.allow_resize, settings.allow_resize, true))
+                Some(Controls::new().minimise(settings.allow_resize).maximise(settings.allow_resize))
             } else {
                 None
-            })
-            .build()
-            .expect("oh no");
+            });
+
+        // if unix... pass visual...
+        #[cfg(unix)]
+        unsafe {
+            let glx = crate::render::opengl::glx::GLX.as_ref().unwrap();
+            builder = builder.depth(glx.depth).visual(glx.visual);
+        }
+
+        let window = builder.build()?;
 
         // Set up audio manager
         let mut audio = audio::AudioManager::new(play_type != PlayType::Record);
 
         // TODO: specific flags here (make wb mutable)
 
-        let mut renderer = Renderer::new((), &options, &window, settings.clear_colour.into())?;
+        let mut renderer = Renderer::new((), &connection, &options, &window, settings.clear_colour.into())?;
 
         let mut atlases = AtlasBuilder::new(renderer.max_texture_size() as _);
 
@@ -581,7 +600,7 @@ impl Game {
             n => Scaling::Fixed(f64::from(n) / 100.0),
         };
 
-        //println!("GPU Max Texture Size: {}", renderer.max_gpu_texture_size());
+        println!("GPU Max Texture Size: {}", renderer.max_texture_size());
 
         let particle_shapes = particle::load_shapes(&mut atlases);
 
@@ -1427,7 +1446,7 @@ impl Game {
             };
             if self.play_type != PlayType::Record {
                 self.window_inner_size = (width, height);
-                self.window.set_inner_size(Size::Physical(width, height));
+                self.window.set_size((width as _, height as _));
             }
         }
     }
@@ -1966,24 +1985,24 @@ impl Game {
 
     pub fn process_window_events(&mut self) {
         self.input.mouse_step();
-        self.window.swap_events();
+        self.window.poll_events();
         match self.play_type {
             PlayType::Normal => {
-                for event in self.window.events() {
+                for event in self.window.events().into_iter().copied() {
                     match event {
-                        Event::KeyboardDown(key) => self.input.button_press(input::ramen2vk(*key), true),
-                        Event::KeyboardUp(key) => self.input.button_release(input::ramen2vk(*key), true),
-                        Event::MouseMove((point, scale)) => {
-                            let (x, y) = point.as_physical(*scale);
+                        Event::KeyboardDown(key) => self.input.button_press(input::ramen2vk(key), true),
+                        Event::KeyboardUp(key) => self.input.button_release(input::ramen2vk(key), true),
+                        Event::MouseMove((x, y)) => {
                             if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                 self.input.mouse_move_to((x, y));
                             }
                         },
-                        Event::MouseDown(button) => self.input.mouse_press(input::ramen2mb(*button), true),
-                        Event::MouseUp(button) => self.input.mouse_release(input::ramen2mb(*button), true),
-                        Event::MouseWheel(x) => self.input.mouse_scroll(*x),
-                        Event::Resize((size, scale)) => self.window_inner_size = size.as_physical(*scale),
-                        Event::CloseRequest(_) => self.close_requested = true,
+                        Event::MouseDown(button) => self.input.mouse_press(input::ramen2mb(button), true),
+                        Event::MouseUp(button) => self.input.mouse_release(input::ramen2mb(button), true),
+                        Event::ScrollUp => self.input.mouse_scroll_up(),
+                        Event::ScrollDown => self.input.mouse_scroll_down(),
+                        Event::Resize((width, height)) => self.window_inner_size = (width as _, height as _),
+                        Event::CloseRequest => self.close_requested = true,
                         _ => (),
                     }
                 }
@@ -2179,7 +2198,7 @@ impl Game {
     }
 
     // Replays some recorded inputs to the game
-    pub fn replay(mut self, replay: Replay, output_bin: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn replay(mut self, replay: Replay, output_bin: Option<PathBuf>, start_save_path: Option<&PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
         let mut frame_count: usize = 0;
         self.rand.set_seed(replay.start_seed);
         self.spoofed_time_nanos = Some(replay.start_time);
@@ -2190,16 +2209,55 @@ impl Game {
             self.renderer.upload_sprite(Box::new([0, 0, 0, 0]), 1, 1, 0, 0).expect("Failed to upload blank sprite");
         }
 
-        for ev in replay.startup_events.iter() {
-            self.stored_events.push_back(ev.clone());
+        let mut clean_state = true;
+        if start_save_path.is_some() {
+            let mut save_buffer = savestate::Buffer::new();
+            match SaveState::from_file(start_save_path.unwrap(), &mut save_buffer) {
+                Ok(state) => {
+                    let (rep, ren) = state.clone().load_into(&mut self);
+                    if !replay.contains_part(&rep) {
+                        panic!("Savestate is not part of replay");
+                    }
+
+                    frame_count = rep.frame_count();
+                    clean_state = state.clean_state;
+                    self.renderer.set_state(&ren);
+                },
+                Err(e) => {
+                    panic!("(Fatal) Error loading savestate file: {:?}", e);
+                }
+            }
+        } else {
+            for ev in replay.startup_events.iter() {
+                self.stored_events.push_back(ev.clone());
+            }
+            self.init()?;
+            handle_scene_change!(self);
         }
-        self.init()?;
-        handle_scene_change!(self);
 
         let mut time_now = Instant::now();
         loop {
-            self.window.swap_events();
+            self.window.poll_events();
             self.input.mouse_step();
+            
+            if self.frame_limit_at > 0 && frame_count == self.frame_limit_at || frame_count == replay.frame_count() {
+                if let Some(bin) = &output_bin {
+                    if start_save_path.is_some() {
+                        // Store the current framebuffer since it's used by the savestate. Only matters if there already is a framebuffer stored which is the case when loading a savestate.
+                        self.renderer.resize_framebuffer(self.renderer.stored_size().0, self.renderer.stored_size().1, true);
+                    }
+                    let render_state = self.renderer.state();
+                    let mut new_replay = replay.clone();
+                    new_replay.truncate_frames(frame_count);
+                    match SaveState::from(&mut self, new_replay, render_state, clean_state)
+                        .save_to_file(bin, &mut savestate::Buffer::new())
+                    {
+                        Ok(()) => break Ok(()),
+                        Err(e) => break Err(format!("Error saving to {:?}: {:?}", output_bin, e).into()),
+                    }
+                }
+            }
+
             if let Some(frame) = replay.get_frame(frame_count) {
                 if !self.stored_events.is_empty() {
                     return Err(format!(
@@ -2211,14 +2269,6 @@ impl Game {
                 }
 
                 self.set_input_from_frame(frame);
-            } else if let Some(bin) = &output_bin {
-                let render_state = self.renderer.state();
-                match SaveState::from(&mut self, replay.clone(), render_state)
-                    .save_to_file(bin, &mut savestate::Buffer::new())
-                {
-                    Ok(()) => break Ok(()),
-                    Err(e) => break Err(format!("Error saving to {:?}: {:?}", output_bin, e).into()),
-                }
             }
 
             self.frame()?;

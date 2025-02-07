@@ -97,46 +97,46 @@ fn rgb_to_hsv(colour: i32) -> (i32, i32, i32) {
 impl Game {
     pub fn display_get_width(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [])?;
+        #[cfg(target_os = "windows")]
         if self.play_type == PlayType::Normal {
-            platform::display_width().map(Value::from).ok_or_else(|| {
+            return platform::display_width().map(Value::from).ok_or_else(|| {
                 gml::Error::FunctionError("display_get_width".into(), "getting display width failed".into())
-            })
-        } else {
-            Ok(1280.into())
+            });
         }
+        Ok(1280.into())
     }
 
     pub fn display_get_height(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [])?;
+        #[cfg(target_os = "windows")]
         if self.play_type == PlayType::Normal {
-            platform::display_height().map(Value::from).ok_or_else(|| {
+            return platform::display_height().map(Value::from).ok_or_else(|| {
                 gml::Error::FunctionError("display_get_height".into(), "getting display height failed".into())
-            })
-        } else {
-            Ok(720.into())
+            });
         }
+        Ok(720.into())
     }
 
     pub fn display_get_colordepth(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [])?;
+        #[cfg(target_os = "windows")]
         if self.play_type == PlayType::Normal {
-            platform::display_colour_depth().map(Value::from).ok_or_else(|| {
+            return platform::display_colour_depth().map(Value::from).ok_or_else(|| {
                 gml::Error::FunctionError("display_get_colordepth".into(), "getting display colour depth failed".into())
-            })
-        } else {
-            Ok(32.into())
+            });
         }
+        Ok(32.into())
     }
 
     pub fn display_get_frequency(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [])?;
+        #[cfg(target_os = "windows")]
         if self.play_type == PlayType::Normal {
-            platform::display_frequency().map(Value::from).ok_or_else(|| {
+            return platform::display_frequency().map(Value::from).ok_or_else(|| {
                 gml::Error::FunctionError("display_get_frequency".into(), "getting display frequency failed".into())
-            })
-        } else {
-            Ok(60.into())
+            });
         }
+        Ok(60.into())
     }
 
     pub fn display_set_size(&mut self, _args: &[Value]) -> gml::Result<Value> {
@@ -227,11 +227,11 @@ impl Game {
         let show_icons = expect_args!(args, [bool])?;
         if show_icons != self.window_icons {
             self.window_icons = show_icons;
-            if self.play_type != PlayType::Record {
-                self.window.set_controls({
-                    if self.window_icons { Some(ramen::window::Controls::enabled()) } else { None }
-                })
-            }
+            // if self.play_type != PlayType::Record {
+            //     self.window.set_controls({
+            //         if self.window_icons { Some(ramen::window::Controls::new()) } else { None }
+            //     })
+            // }
         }
         Ok(Default::default())
     }
@@ -345,14 +345,7 @@ impl Game {
         let (width, height) = expect_args!(args, [int, int])?;
         if width > 0 && height > 0 {
             self.window_inner_size = (width as u32, height as u32);
-            self.window.execute(|window| {
-                use ramen::monitor::Size;
-                if window.is_dpi_logical() {
-                    unimplemented!();
-                } else {
-                    window.set_inner_size(Size::Physical(width as u32, height as u32));
-                }
-            });
+            self.window.set_size((width as _, height as _));
         }
         Ok(Default::default())
     }
@@ -428,7 +421,7 @@ impl Game {
                 (region_w, region_h)
             };
             self.window_inner_size = (width, height);
-            self.window.set_inner_size(ramen::monitor::Size::Physical(width, height));
+            self.window.set_size((width as _, height as _));
         }
         Ok(Default::default())
     }
@@ -532,7 +525,7 @@ impl Game {
         let rgba = self.renderer.get_pixels(0, 0, width as _, height as _);
         let mut image = RgbaImage::from_vec(width, height, rgba.into()).unwrap();
         asset::sprite::process_image(&mut image, false, false, true);
-        match file::save_image(fname.as_ref(), image) {
+        match file::save_image(file::to_path(&fname).as_ref(), image) {
             Ok(()) => Ok(Default::default()),
             Err(e) => Err(gml::Error::FunctionError("screen_save".into(), e.to_string())),
         }
@@ -548,7 +541,7 @@ impl Game {
         let rgba = self.renderer.get_pixels(x, y, w, h);
         let mut image = RgbaImage::from_vec(w as _, h as _, rgba.into()).unwrap();
         asset::sprite::process_image(&mut image, false, false, true);
-        match file::save_image(fname.as_ref(), image) {
+        match file::save_image(file::to_path(&fname).as_ref(), image) {
             Ok(()) => Ok(Default::default()),
             Err(e) => Err(gml::Error::FunctionError("screen_save_part".into(), e.to_string())),
         }
@@ -2438,7 +2431,7 @@ impl Game {
             let mut image =
                 RgbaImage::from_vec(surf.width, surf.height, self.renderer.dump_sprite(surf.atlas_ref).into()).unwrap();
             asset::sprite::process_image(&mut image, false, false, true);
-            match file::save_image(fname.as_ref(), image) {
+            match file::save_image(file::to_path(&fname).as_ref(), image) {
                 Ok(()) => Ok(Default::default()),
                 Err(e) => Err(gml::Error::FunctionError("surface_save".into(), e.to_string())),
             }
@@ -2461,7 +2454,7 @@ impl Game {
                 RgbaImage::from_vec(w as _, h as _, self.renderer.dump_sprite_part(surf.atlas_ref, x, y, w, h).into())
                     .unwrap();
             asset::sprite::process_image(&mut image, false, false, true);
-            match file::save_image(fname.as_ref(), image) {
+            match file::save_image(file::to_path(&fname).as_ref(), image) {
                 Ok(()) => Ok(Default::default()),
                 Err(e) => Err(gml::Error::FunctionError("surface_save_part".into(), e.to_string())),
             }
@@ -2644,9 +2637,9 @@ impl Game {
     pub fn action_move_point(&mut self, context: &mut Context, args: &[Value]) -> gml::Result<Value> {
         let (x, y, speed) = expect_args!(args, [real, real, real])?;
         let instance = self.room.instance_list.get(context.this);
-        let speed = if context.relative { instance.speed.get() + speed } else { speed };
-        let direction = (instance.y.get() - y).arctan2(x - instance.x.get()).to_degrees();
-        instance.set_speed_direction(speed, direction);
+        let (x, y) = if context.relative { (instance.x.get() + x, instance.y.get() + y) } else { (x, y) };
+        instance.set_hvspeed(x - instance.x.get(), y - instance.y.get());
+        instance.set_speed(speed);
         Ok(Default::default())
     }
 
@@ -3575,6 +3568,7 @@ impl Game {
 
     pub fn action_set_cursor(&mut self, args: &[Value]) -> gml::Result<Value> {
         let (sprite_id, show_window_cursor) = expect_args!(args, [int, bool])?;
+        let _ = (sprite_id, show_window_cursor);
         self.cursor_sprite = sprite_id;
         let cursor = if show_window_cursor {
             Cursor::Arrow // GM8 seems to always resets to default cursor on call of this function
@@ -4024,7 +4018,7 @@ impl Game {
 
     pub fn clamp(args: &[Value]) -> gml::Result<Value> {
         // NOTE: rust clamp() has an assert, GM doesn't
-        expect_args!(args, [real, real, real]).map(|(n, lo, hi)| Value::Real(n.min(lo).max(hi)))
+        expect_args!(args, [real, real, real]).map(|(n, lo, hi)| Value::Real(n.max(lo).min(hi)))
     }
 
     pub fn lerp(args: &[Value]) -> gml::Result<Value> {
@@ -5725,7 +5719,7 @@ impl Game {
     pub fn game_save(&mut self, args: &[Value]) -> gml::Result<Value> {
         let fname = expect_args!(args, [string])?;
         let save = GMSave::from_game(self);
-        let mut file = std::fs::File::create(fname.as_ref())
+        let mut file = std::fs::File::create(file::to_path(&fname).as_ref())
             .map(std::io::BufWriter::new)
             .map_err(|e| gml::Error::FunctionError("game_save".into(), format!("{}", e)))?;
         // write magic number (0x21c in GM8)
@@ -5750,12 +5744,23 @@ impl Game {
 
     pub fn sleep(&mut self, args: &[Value]) -> gml::Result<Value> {
         let millis = expect_args!(args, [int])?;
-        if millis > 0 {
-            datetime::sleep(std::time::Duration::from_millis(millis as u64));
-            if let Some(ns) = self.spoofed_time_nanos.as_mut() {
-                *ns += (millis as u128) * 1_000_000;
+        match u64::try_from(millis) {
+            Ok(0) | Err(_) => (),
+            Ok(millis) => {
+                let duration = std::time::Duration::from_millis(millis);
+                match self.play_type {
+                    PlayType::Normal => {
+                        datetime::sleep(duration);
+                        self.process_window_events();
+                    },
+                    PlayType::Record => (),
+                    PlayType::Replay => datetime::sleep(duration),
+                }
+
+                if let Some(ns) = self.spoofed_time_nanos.as_mut() {
+                    *ns += (millis as u128) * 1_000_000;
+                }
             }
-            self.process_window_events();
         }
         Ok(Default::default())
     }
@@ -5837,7 +5842,7 @@ impl Game {
             1 => file::AccessMode::Write,
             2 | _ => file::AccessMode::Special,
         };
-        match self.binary_files.add_from(|| Ok(file::BinaryHandle::open(filename.as_ref(), mode)?)) {
+        match self.binary_files.add_from(|| Ok(file::BinaryHandle::open(file::to_path(&filename).as_ref(), mode)?)) {
             Ok(i) => Ok((i + 1).into()),
             Err(e) => Err(gml::Error::FunctionError("file_bin_open".into(), e.to_string())),
         }
@@ -5915,7 +5920,7 @@ impl Game {
         let filename = expect_args!(args, [string])?;
         use std::error::Error as _; // for .source() trait method
 
-        match self.text_files.add_from(|| Ok(file::TextHandle::open(filename.as_ref(), file::AccessMode::Read)?)) {
+        match self.text_files.add_from(|| Ok(file::TextHandle::open(file::to_path(&filename).as_ref(), file::AccessMode::Read)?)) {
             Ok(i) => Ok((i + 1).into()),
             Err(e)
                 if e.source()
@@ -5930,7 +5935,7 @@ impl Game {
 
     pub fn file_text_open_write(&mut self, args: &[Value]) -> gml::Result<Value> {
         let filename = expect_args!(args, [string])?;
-        match self.text_files.add_from(|| Ok(file::TextHandle::open(filename.as_ref(), file::AccessMode::Write)?)) {
+        match self.text_files.add_from(|| Ok(file::TextHandle::open(file::to_path(&filename).as_ref(), file::AccessMode::Write)?)) {
             Ok(i) => Ok((i + 1).into()),
             Err(e) => Err(gml::Error::FunctionError("file_text_open_write".into(), e.to_string())),
         }
@@ -5938,7 +5943,7 @@ impl Game {
 
     pub fn file_text_open_append(&mut self, args: &[Value]) -> gml::Result<Value> {
         let filename = expect_args!(args, [string])?;
-        match self.text_files.add_from(|| Ok(file::TextHandle::open(filename.as_ref(), file::AccessMode::Special)?)) {
+        match self.text_files.add_from(|| Ok(file::TextHandle::open(file::to_path(&filename).as_ref(), file::AccessMode::Special)?)) {
             Ok(i) => Ok((i + 1).into()),
             Err(e) => Err(gml::Error::FunctionError("file_text_open_append".into(), e.to_string())),
         }
@@ -6036,7 +6041,7 @@ impl Game {
 
     pub fn file_open_read(&mut self, args: &[Value]) -> gml::Result<Value> {
         let filename = expect_args!(args, [string])?;
-        match file::TextHandle::open(filename.as_ref(), file::AccessMode::Read) {
+        match file::TextHandle::open(file::to_path(&filename).as_ref(), file::AccessMode::Read) {
             Ok(f) => {
                 self.open_file.replace(f);
             },
@@ -6052,7 +6057,7 @@ impl Game {
 
     pub fn file_open_write(&mut self, args: &[Value]) -> gml::Result<Value> {
         let filename = expect_args!(args, [string])?;
-        match file::TextHandle::open(filename.as_ref(), file::AccessMode::Write) {
+        match file::TextHandle::open(file::to_path(&filename).as_ref(), file::AccessMode::Write) {
             Ok(f) => {
                 self.open_file.replace(f);
                 Ok(Default::default())
@@ -6066,7 +6071,7 @@ impl Game {
 
     pub fn file_open_append(&mut self, args: &[Value]) -> gml::Result<Value> {
         let filename = expect_args!(args, [string])?;
-        match file::TextHandle::open(filename.as_ref(), file::AccessMode::Special) {
+        match file::TextHandle::open(file::to_path(&filename).as_ref(), file::AccessMode::Special) {
             Ok(f) => {
                 self.open_file.replace(f);
                 Ok(Default::default())
@@ -6155,14 +6160,14 @@ impl Game {
 
     pub fn file_exists(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [any]).map(|x| match x {
-            Value::Str(s) => file::file_exists(&self.decode_str(s.as_ref())).into(),
+            Value::Str(s) => file::file_exists(file::to_path(&self.decode_str(s.as_ref())).as_ref()).into(),
             Value::Real(_) => gml::FALSE.into(),
         })
     }
 
     pub fn file_delete(&self, args: &[Value]) -> gml::Result<Value> {
         let filename = expect_args!(args, [string])?;
-        match file::delete(filename.as_ref()) {
+        match file::delete(file::to_path(&filename).as_ref()) {
             Ok(()) => Ok(Default::default()),
             Err(e) => Err(gml::Error::FunctionError("file_delete".into(), e.to_string())),
         }
@@ -6170,7 +6175,7 @@ impl Game {
 
     pub fn file_rename(&self, args: &[Value]) -> gml::Result<Value> {
         let (from, to) = expect_args!(args, [string, string])?;
-        if file::rename(from.as_ref(), to.as_ref()).is_err() {
+        if file::rename(file::to_path(&from).as_ref(), file::to_path(&to).as_ref()).is_err() {
             // Fail silently
             eprintln!("Warning (file_rename): could not rename {} to {}", from, to);
         }
@@ -6179,7 +6184,7 @@ impl Game {
 
     pub fn file_copy(&self, args: &[Value]) -> gml::Result<Value> {
         let (from, to) = expect_args!(args, [string, string])?;
-        if file::copy(from.as_ref(), to.as_ref()).is_err() {
+        if file::copy(file::to_path(&from).as_ref(), file::to_path(&to).as_ref()).is_err() {
             // Fail silently
             eprintln!("Warning (file_copy): could not copy {} to {}", from, to);
         }
@@ -6188,14 +6193,14 @@ impl Game {
 
     pub fn directory_exists(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [any]).map(|x| match x {
-            Value::Str(s) => file::dir_exists(&self.decode_str(s.as_ref())).into(),
+            Value::Str(s) => file::dir_exists(file::to_path(&self.decode_str(s.as_ref())).as_ref()).into(),
             Value::Real(_) => gml::FALSE.into(),
         })
     }
 
     pub fn directory_create(&self, args: &[Value]) -> gml::Result<Value> {
         let path = expect_args!(args, [string])?;
-        match file::dir_create(path.as_ref()) {
+        match file::dir_create(file::to_path(&path).as_ref()) {
             Ok(()) => Ok(Default::default()),
             Err(e) => Err(gml::Error::FunctionError("directory_create".into(), e.to_string())),
         }
@@ -6516,7 +6521,7 @@ impl Game {
     pub fn ini_open(&mut self, args: &[Value]) -> gml::Result<Value> {
         let name = expect_args!(args, [bytes])?;
         let name_str = self.decode_str(name.as_ref());
-        if file::file_exists(&name_str) {
+        if file::file_exists(&file::to_path(&name_str)) {
             match ini::Ini::load_from_file(name_str.as_ref()) {
                 Ok(ini) => {
                     self.open_ini = Some((ini, name));
@@ -6658,29 +6663,30 @@ impl Game {
     }
 
     pub fn disk_free(&self, args: &[Value]) -> gml::Result<Value> {
+        #[cfg(target_os = "windows")]
         if self.play_type == PlayType::Normal {
             let path = match args.get(0).clone() {
                 Some(Value::Str(p)) => p.as_ref().get(0).map(|&x| x as char),
                 _ => None,
             };
-            Ok(platform::disk_free(path).map(|x| x as f64).unwrap_or(-1f64).into())
-        } else {
-            // half a terabyte
-            Ok((0x80000_00000u64 as f64).into())
+            return Ok(platform::disk_free(path).map(|x| x as f64).unwrap_or(-1f64).into());
         }
+
+        // half a terabyte
+        Ok((0x80000_00000u64 as f64).into())
     }
 
     pub fn disk_size(&self, args: &[Value]) -> gml::Result<Value> {
+        #[cfg(target_os = "windows")]
         if self.play_type == PlayType::Normal {
             let path = match args.get(0).clone() {
                 Some(Value::Str(p)) => p.as_ref().get(0).map(|&x| x as char),
                 _ => None,
             };
-            Ok(platform::disk_size(path).map(|x| x as f64).unwrap_or(-1f64).into())
-        } else {
-            // a terabyte
-            Ok((0x1_00000_00000u64 as f64).into())
+            return Ok(platform::disk_size(path).map(|x| x as f64).unwrap_or(-1f64).into());
         }
+        // a terabyte
+        Ok((0x1_00000_00000u64 as f64).into())
     }
 
     pub fn splash_set_caption(&mut self, _args: &[Value]) -> gml::Result<Value> {
@@ -7678,12 +7684,16 @@ impl Game {
 
     pub fn window_handle(&self, args: &[Value]) -> gml::Result<Value> {
         expect_args!(args, [])?;
-        #[cfg(target_os = "windows")]
-        {
-            use ramen::platform::win32::WindowExt as _;
-            Ok((self.window.hwnd() as usize).into())
-        }
-        // TODO: Others! (They'll compile error here so it'll remind me)
+        Ok({
+            #[cfg(target_os = "windows")]
+            {
+                self.window.hwnd() as u64 as f64
+            }
+            #[cfg(unix)]
+            {
+                self.window.xid()
+            }
+        }.into())
     }
 
     pub fn show_debug_message(&self, args: &[Value]) -> gml::Result<Value> {
@@ -8205,13 +8215,27 @@ impl Game {
                     let mut dst_data = self.renderer.dump_sprite(dst_frame.atlas_ref);
                     // TODO: delete sprite when this is safe for sprite fonts
                     // self.renderer.delete_sprite(dst_frame.atlas_ref);
-                    for (dst_row, src_row) in dst_data
-                        .chunks_mut(dst_frame.width as usize * 4)
-                        .zip(src_data.chunks(src_frame.width as usize * 4))
-                    {
-                        for (dst_col, src_col) in dst_row.chunks_mut(4).zip(src_row.chunks(4)) {
-                            dst_col[3] = (src_col[..3].iter().map(|&x| u16::from(x)).sum::<u16>() / 3u16) as u8;
-                        }
+                    match self.gm_version {
+                        Version::GameMaker8_0 => {
+                            for (dst_row, src_row) in dst_data
+                                .chunks_mut(dst_frame.width as usize * 4)
+                                .zip(src_data.chunks(src_frame.width as usize * 4))
+                            {
+                                for (dst_col, src_col) in dst_row.chunks_mut(4).zip(src_row.chunks(4)) {
+                                    dst_col[3] = ((src_col[..3].iter().map(|&x| u32::from(x)).sum::<u32>() * u32::from(dst_col[3])) / (3*255)) as u8;
+                                }
+                            }
+                        },
+                        Version::GameMaker8_1 => {
+                            for (dst_row, src_row) in dst_data
+                                .chunks_mut(dst_frame.width as usize * 4)
+                                .zip(src_data.chunks(src_frame.width as usize * 4))
+                            {
+                                for (dst_col, src_col) in dst_row.chunks_mut(4).zip(src_row.chunks(4)) {
+                                    dst_col[3] = (src_col[..3].iter().map(|&x| u16::from(x)).sum::<u16>() / 3u16) as u8;
+                                }
+                            }
+                        },
                     }
                     dst_frame.atlas_ref = self
                         .renderer
@@ -8445,7 +8469,7 @@ impl Game {
         let (fname, imgnumb, removeback, smooth, origin_x, origin_y) =
             expect_args!(args, [string, int, bool, bool, int, int])?;
         let imgnumb = imgnumb.max(1) as usize;
-        let mut images = match file::load_animation(fname.as_ref(), imgnumb) {
+        let mut images = match file::load_animation(file::to_path(&fname).as_ref(), imgnumb) {
             Ok(frames) => frames,
             Err(e) => {
                 eprintln!("Warning: sprite_add on {} failed: {}", fname, e);
@@ -8499,7 +8523,7 @@ impl Game {
                 self.renderer.delete_sprite(frame.atlas_ref);
             }
             let imgnumb = imgnumb.max(1) as usize;
-            let mut images = match file::load_animation(fname.as_ref(), imgnumb) {
+            let mut images = match file::load_animation(file::to_path(&fname).as_ref(), imgnumb) {
                 Ok(frames) => frames,
                 Err(e) => {
                     eprintln!("Warning: sprite_replace on {} failed: {}", fname, e);
@@ -8632,7 +8656,7 @@ impl Game {
             if let Some(frame) = sprite.get_frame(image_index) {
                 // get RGBA
                 if let Err(e) = file::save_image(
-                    fname.as_ref(),
+                    file::to_path(&fname).as_ref(),
                     RgbaImage::from_vec(frame.width, frame.height, self.renderer.dump_sprite(frame.atlas_ref).into())
                         .unwrap(),
                 ) {
@@ -8763,10 +8787,21 @@ impl Game {
         {
             let mut dst = self.renderer.dump_sprite(*atlas_ref);
             self.renderer.delete_sprite(*atlas_ref);
-            for (dst_row, src_row) in dst.chunks_mut(dst_w as usize * 4).zip(alpha_src.chunks(src_w as usize * 4)) {
-                for (dst_col, src_col) in dst_row.chunks_mut(4).zip(src_row.chunks(4)) {
-                    dst_col[3] = (src_col[..3].iter().map(|&x| u16::from(x)).sum::<u16>() / 3u16) as u8;
-                }
+            match self.gm_version {
+                Version::GameMaker8_0 => {
+                    for (dst_row, src_row) in dst.chunks_mut(dst_w as usize * 4).zip(alpha_src.chunks(src_w as usize * 4)) {
+                        for (dst_col, src_col) in dst_row.chunks_mut(4).zip(src_row.chunks(4)) {
+                            dst_col[3] = ((src_col[..3].iter().map(|&x| u32::from(x)).sum::<u32>() * u32::from(dst_col[3])) / (3*255)) as u8;
+                        }
+                    }
+                },
+                Version::GameMaker8_1 => {
+                    for (dst_row, src_row) in dst.chunks_mut(dst_w as usize * 4).zip(alpha_src.chunks(src_w as usize * 4)) {
+                        for (dst_col, src_col) in dst_row.chunks_mut(4).zip(src_row.chunks(4)) {
+                            dst_col[3] = (src_col[..3].iter().map(|&x| u16::from(x)).sum::<u16>() / 3u16) as u8;
+                        }
+                    }
+                },
             }
             *atlas_ref = self
                 .renderer
@@ -8857,7 +8892,7 @@ impl Game {
 
     pub fn background_add(&mut self, args: &[Value]) -> gml::Result<Value> {
         let (fname, removeback, smooth) = expect_args!(args, [string, bool, bool])?;
-        let mut image = match file::load_image(fname.as_ref()) {
+        let mut image = match file::load_image(file::to_path(&fname).as_ref()) {
             Ok(im) => im,
             Err(e) => {
                 eprintln!("Warning: background_add on {} failed: {}", fname, e);
@@ -8887,7 +8922,7 @@ impl Game {
             if let Some(atlas_ref) = background.atlas_ref {
                 self.renderer.delete_sprite(atlas_ref);
             }
-            let mut image = match file::load_image(fname.as_ref()) {
+            let mut image = match file::load_image(file::to_path(&fname).as_ref()) {
                 Ok(im) => im,
                 Err(e) => {
                     eprintln!("Warning: background_replace on {} failed: {}", fname, e);
@@ -9003,7 +9038,7 @@ impl Game {
             if let Some(atlas_ref) = background.atlas_ref {
                 // get RGBA
                 if let Err(e) = file::save_image(
-                    fname.as_ref(),
+                    file::to_path(&fname).as_ref(),
                     RgbaImage::from_vec(
                         background.width,
                         background.height,
@@ -13365,7 +13400,7 @@ impl Game {
     pub fn d3d_model_load(&mut self, args: &[Value]) -> gml::Result<Value> {
         let (model_id, fname) = expect_args!(args, [int, string])?;
         fn load_model(fname: &str) -> Result<model::Model, Box<dyn std::error::Error>> {
-            let mut file = std::io::BufReader::new(std::fs::File::open(fname)?);
+            let mut file = std::io::BufReader::new(std::fs::File::open(file::to_path(&fname).as_ref())?);
             let version = file::read_real(&mut file)?;
             if version != 100.0 {
                 return Err("invalid version".into())
@@ -13483,7 +13518,7 @@ impl Game {
     pub fn d3d_model_save(&mut self, args: &[Value]) -> gml::Result<Value> {
         let (model_id, fname) = expect_args!(args, [int, string])?;
         fn save_model(model: &model::Model, fname: &str) -> std::io::Result<()> {
-            let mut file = std::io::BufWriter::new(std::fs::File::create(fname)?);
+            let mut file = std::io::BufWriter::new(std::fs::File::create(file::to_path(&fname).as_ref())?);
             writeln!(&mut file, "100\r\n{}\r", model.commands.len())?;
             for cmd in &model.commands {
                 let (cmd, args) = cmd.to_line();
