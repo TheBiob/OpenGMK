@@ -67,9 +67,9 @@ fn xmain() -> i32 {
         return EXIT_SUCCESS
     }
 
-    let version = matches.opt_str("v").unwrap();
-    let input_file = &matches.opt_str("f").map(PathBuf::from).unwrap();
-    let output_file = &matches.opt_str("o").map(PathBuf::from).unwrap();
+    let version = matches.opt_str("v").unwrap_or(String::from("gmtas_any"));
+    let input_file = &matches.opt_str("f").map(PathBuf::from).unwrap_or(PathBuf::from("save.gmtas"));
+    let output_file = &matches.opt_str("o").map(PathBuf::from).unwrap_or(PathBuf::from("save-v1.gmtas"));
 
     if version == "gmtas_any" {
         convert_any_replay(input_file, output_file);
@@ -84,13 +84,22 @@ fn xmain() -> i32 {
 
 fn convert_any_replay(input: &PathBuf, output: &PathBuf) {
     match Replay::from_file(input) {
-        Ok(v) => {v.to_file(output);},
-        Err(v) => {println!("Error readon v1, trying v0"); convert_v0_replay(input, output);},
+        Ok(v) => {
+            v.to_file(output);
+            println!("Converted V1 replay");
+        },
+        Err(v) => {
+            println!("Error reading v1, trying v0");
+            convert_v0_replay(input, output);
+        },
     }
 }
 fn convert_v0_replay(input: &PathBuf, output: &PathBuf) {
     match ReplayV0::from_file(input) {
-        Ok(v) => {Replay::from(v).to_file(output);},
+        Ok(v) => {
+            Replay::from(v).to_file(output);
+            println!("Converted V0 replay");
+        },
         Err(v) => println!("Error reading v0 replay. Input file does not match known format."),
     }
 }
