@@ -15,7 +15,7 @@ mod util;
 
 use game::replay::*;
 use std::{
-    env, fs,
+    env,
     path::{Path, PathBuf},
     process,
 };
